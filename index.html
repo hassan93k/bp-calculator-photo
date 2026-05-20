@@ -107,6 +107,17 @@ html,body{
 .mic-status.listening{color:#d23030;font-weight:600}
 .mic-heard{font-size:12px;color:#003087;font-weight:500;margin-top:4px;min-height:14px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .no-voice .btn-mode-primary{display:none}
+.btn-mode-camera{background:#1a1a2e;color:#fff}
+.btn-mode-camera .btn-mode-icon{background:rgba(255,255,255,0.15)}
+.cover-card{background:#eaf3de;border:1px solid #a8d070;border-radius:14px;padding:14px 16px;margin-top:10px;display:flex;gap:10px}
+.cover-card p{font-size:12px;color:#2a6010;line-height:1.6}
+.cover-card p strong{display:block;font-weight:700;margin-bottom:2px;font-size:13px}
+.spinner-screen{display:none;position:fixed;inset:0;background:rgba(255,255,255,.96);z-index:100;flex-direction:column;align-items:center;justify-content:center;gap:16px;padding:40px}
+.spinner-screen.show{display:flex}
+.spinner{width:44px;height:44px;border:3px solid #e0e0e5;border-top-color:#003087;border-radius:50%;animation:spin .75s linear infinite}
+.spinner-msg{font-size:15px;color:#8e8e93;font-weight:500;text-align:center;line-height:1.5}
+.spinner-note{font-size:12px;color:#c7c7cc;text-align:center;line-height:1.5}
+@keyframes spin{to{transform:rotate(360deg)}}
 
 .hint{font-size:13px;color:#8e8e93;padding:14px 20px 8px}
 
@@ -169,6 +180,13 @@ html,body{
   </div>
   <p class="home-subtitle">How would you like to enter the readings?</p>
   <div class="mode-section">
+    <button class="btn-mode btn-mode-camera" onclick="document.getElementById('cameraInput').click()">
+      <div class="btn-mode-icon">📷</div>
+      <div class="btn-mode-text">
+        <div class="btn-mode-title">Scan BP sheet with camera</div>
+        <div class="btn-mode-sub">Reads values automatically · rear camera</div>
+      </div>
+    </button>
     <button class="btn-mode btn-mode-primary" onclick="startVoiceMode()">
       <div class="btn-mode-icon"><svg viewBox="0 0 24 24"><path d="M12 14a3 3 0 0 0 3-3V5a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-3.08A7 7 0 0 0 19 11h-2z"/></svg></div>
       <div class="btn-mode-text">
@@ -184,13 +202,25 @@ html,body{
       </div>
     </button>
   </div>
+  <input type="file" id="cameraInput" accept="image/*" capture="environment" style="display:none" onchange="processPhoto(event)">
   <div class="privacy-card">
     <div style="font-size:18px;flex-shrink:0">🛡</div>
-    <p><strong>No data stored — ever.</strong> Calculations happen on this device only. Nothing is saved when you close this tab.</p>
+    <p><strong>NHS compliant — UK data only.</strong> Camera images processed by Microsoft Azure UK South. Nothing stored anywhere.</p>
+  </div>
+  <div class="cover-card">
+    <div style="font-size:18px;flex-shrink:0">✋</div>
+    <p><strong>Before taking the photo:</strong> Cover any patient name, DOB, NHS number or identifying information.</p>
   </div>
   <div class="home-footer">
-    <p>Enter each reading from the patient's BP sheet</p>
+    <p>Camera: Microsoft Azure Computer Vision · UK South<br>Voice & manual: processed on this device only</p>
   </div>
+</div>
+
+<!-- SPINNER (camera processing) -->
+<div class="spinner-screen" id="spinnerScreen">
+  <div class="spinner"></div>
+  <div class="spinner-msg">Reading BP values…</div>
+  <div class="spinner-note">Processing on Microsoft Azure UK South.<br>Image is not stored anywhere.</div>
 </div>
 
 <!-- ACTIVE SCREEN -->
@@ -289,11 +319,12 @@ function goHome(){
   logSession('home');
   hideKeypad();
   if(listening&&recognition)recognition.stop();
-  readings=[];idCounter=0;
+  readings=[];idCounter=0;mode=null;
   document.getElementById('readingsList').innerHTML='';
   document.getElementById('avgNum').textContent='--/--';
   document.getElementById('countLabel').textContent='0 of 0';
   document.getElementById('progressCount').textContent='0';
+  document.getElementById('spinnerScreen').classList.remove('show');
   document.getElementById('screen').classList.remove('show');
   document.getElementById('homeScreen').classList.remove('hidden');
 }
@@ -526,6 +557,96 @@ function resetAll(){
   else addReading(false);
 }
 
+
+// Worker URL — no key needed in this file
+const WORKER_URL='https://bp-proxy.hassan93k.workers.dev';
+
+async function processPhoto(e){
+  const file=e.target.files[0];
+  if(!file)return;
+  e.target.value='';
+  document.getElementById('spinnerScreen').classList.add('show');
+  try{
+    const blob=await compressToBlob(file);
+    const response=await fetch(WORKER_URL,{
+      method:'POST',
+      headers:{'Content-Type':'application/octet-stream'},
+      body:blob
+    });
+    if(!response.ok){
+      const err=await response.text();
+      throw new Error('Azure error '+response.status+': '+err.slice(0,200));
+    }
+    const data=await response.json();
+    const lines=data?.readResult?.blocks?.flatMap(b=>b.lines)||[];
+    const fullText=lines.map(l=>l.text).join('\n');
+    const found=extractBPs(fullText);
+    mode='camera';
+    readings=found.map(r=>({id:idCounter++,sys:String(r.sys),dia:String(r.dia),included:true}));
+    readings.push({id:idCounter++,sys:'',dia:'',included:true});
+    document.getElementById('homeScreen').classList.add('hidden');
+    document.getElementById('micSection').classList.add('hide');
+    document.getElementById('screen').classList.add('show');
+    startSession();
+    renderList();
+    if(!found.length){
+      alert('No BP readings detected automatically.\n\nPlease check the photo was clear and well-lit, then add readings manually using the + button.');
+    }
+  }catch(err){
+    alert('Camera scan error: '+err.message);
+  }finally{
+    document.getElementById('spinnerScreen').classList.remove('show');
+  }
+}
+
+function compressToBlob(file){
+  return new Promise(res=>{
+    const reader=new FileReader();
+    reader.onload=ev=>{
+      const img=new Image();
+      img.onload=()=>{
+        const MAX=1600;
+        let w=img.naturalWidth,h=img.naturalHeight;
+        if(w>MAX||h>MAX){
+          if(w>h){h=Math.round(h*MAX/w);w=MAX;}
+          else{w=Math.round(w*MAX/h);h=MAX;}
+        }
+        const c=document.createElement('canvas');
+        c.width=w;c.height=h;
+        const ctx=c.getContext('2d');
+        ctx.fillStyle='#fff';ctx.fillRect(0,0,w,h);
+        ctx.drawImage(img,0,0,w,h);
+        c.toBlob(blob=>res(blob),'image/jpeg',0.88);
+      };
+      img.src=ev.target.result;
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
+function extractBPs(text){
+  const found=[];
+  const seen=new Set();
+  function isBP(sys,dia){return sys>=80&&sys<=240&&dia>=40&&dia<=140&&sys>dia&&(sys-dia)>=15;}
+  function addBP(sys,dia){const key=sys+'/'+dia;if(!seen.has(key)){seen.add(key);found.push({sys,dia});}}
+  // Pass 1: inline separator  142/88  142-88  142|88
+  const re=/\b(\d{2,3})\s*[\/\-\|\\]\s*(\d{2,3})\b/g;
+  let m;
+  while((m=re.exec(text))!==null){const sys=parseInt(m[1]),dia=parseInt(m[2]);if(isBP(sys,dia))addBP(sys,dia);}
+  // Pass 2: space-separated pair  142 88
+  const re2=/\b(\d{2,3})\s+(\d{2,3})\b/g;
+  while((m=re2.exec(text))!==null){const sys=parseInt(m[1]),dia=parseInt(m[2]);if(isBP(sys,dia))addBP(sys,dia);}
+  // Pass 3: adjacent lines  111 on one line, 72 on next
+  const lines=text.split(/[\n\r]+/).map(l=>l.trim()).filter(Boolean);
+  for(let i=0;i<lines.length-1;i++){
+    const numsA=(lines[i].match(/\b(\d{2,3})\b/g)||[]).map(Number);
+    const numsB=(lines[i+1].match(/\b(\d{2,3})\b/g)||[]).map(Number);
+    for(const a of numsA){for(const b of numsB){if(isBP(a,b))addBP(a,b);}}
+    for(let j=0;j<numsA.length-1;j++){if(isBP(numsA[j],numsA[j+1]))addBP(numsA[j],numsA[j+1]);}
+  }
+  return found;
+}
+
 // VOICE
 const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
 let recognition=null,listening=false;
@@ -582,23 +703,32 @@ else{
       if(event.results[i].isFinal)finalText+=t+' ';
       else interim+=t;
     }
-    // Show what's being heard
-    document.getElementById('micHeard').textContent=(finalText+interim).trim();
+    // Show interim (what's being heard right now) in grey
+    if(interim)document.getElementById('micHeard').textContent='…'+interim.trim();
     // Any speech resets the silence timer
     resetAutoStop();
     // Only process final results
     if(finalText){
       const parsed=parseSpokenBP(finalText);
-      parsed.forEach(bp=>{
-        const key=bp.sys+'/'+bp.dia;
-        // Prevent duplicate adds from the same final result firing twice
-        if(!recentlyAdded.has(key)){
-          recentlyAdded.add(key);
-          addReadingFromVoice(bp.sys,bp.dia);
-          // Allow same reading again after 2 seconds (patient may genuinely repeat)
-          setTimeout(()=>recentlyAdded.delete(key),2000);
-        }
-      });
+      if(parsed.length>0){
+        const added=[];
+        parsed.forEach(bp=>{
+          const key=bp.sys+'/'+bp.dia;
+          if(!recentlyAdded.has(key)){
+            recentlyAdded.add(key);
+            addReadingFromVoice(bp.sys,bp.dia);
+            added.push(bp.sys+'/'+bp.dia);
+            setTimeout(()=>recentlyAdded.delete(key),2000);
+          }
+        });
+        // addReadingFromVoice already updates micHeard — nothing needed here
+      } else {
+        // Non-BP speech — show briefly then clear, don't block anything
+        document.getElementById('micHeard').textContent='⚠ Not recognised — keep going';
+        setTimeout(()=>{
+          if(!interim)document.getElementById('micHeard').textContent='';
+        },1500);
+      }
     }
   };
 }
@@ -635,28 +765,41 @@ function wordsToNumber(words){
 function parseSpokenBP(text){
   let t=text.toLowerCase().trim();
   const results=[];
+
+  // Normalise spoken separators to /
   t=t.replace(/\bover\b/g,'/').replace(/\bslash\b/g,'/').replace(/\bby\b/g,'/');
-  const re=/(\d{2,3})\s*\/?\s*(\d{2,3})/g;
+
+  // Pass 1: numeric pairs — grab every valid sys/dia from digits already in the string.
+  // Works even if junk words surround them.
+  const numRe=/(\d{2,3})\s*\/?\s*(\d{2,3})/g;
   let m;
-  while((m=re.exec(t))!==null){
+  while((m=numRe.exec(t))!==null){
     const sys=parseInt(m[1]),dia=parseInt(m[2]);
     if(sys>=80&&sys<=240&&dia>=40&&dia<=140&&sys>dia)results.push({sys,dia});
   }
   if(results.length>0)return results;
-  if(t.includes('/')){
-    const parts=t.split('/');
-    if(parts.length>=2){
-      const sys=wordsToNumber(parts[0].trim().split(/\s+/));
-      const dia=wordsToNumber(parts[1].trim().split(/\s+/));
-      if(sys>=80&&sys<=240&&dia>=40&&dia<=140&&sys>dia)results.push({sys,dia});
-    }
+
+  // Pass 2: spoken-word path.
+  // Split on each "/" — each slash is one "over/by/slash" the user said.
+  // That gives us chunks: [...words before first over], [words between overs], ...
+  // Consecutive chunk pairs form one candidate reading: chunk[i] = sys words, chunk[i+1] = dia words.
+  // Try every consecutive pair independently — a bad pair is skipped, good ones still added.
+  if(!t.includes('/'))return results;
+  const chunks=t.split('/');
+  for(let i=0;i<chunks.length-1;i++){
+    // sys words are the LAST few words of chunk[i] (words before this slash)
+    // dia words are the FIRST few words of chunk[i+1] (words after this slash)
+    const sysWords=chunks[i].trim().split(/\s+/).slice(-4); // at most last 4 words
+    const diaWords=chunks[i+1].trim().split(/\s+/).slice(0,4); // at most first 4 words
+    const sys=wordsToNumber(sysWords);
+    const dia=wordsToNumber(diaWords);
+    if(sys>=80&&sys<=240&&dia>=40&&dia<=140&&sys>dia)results.push({sys,dia});
+    // bad pair simply skipped — doesn't affect other pairs
   }
   return results;
 }
 
-// Fix 5: voice readings fill the placeholder row correctly, then add new rows
 function addReadingFromVoice(sys,dia){
-  // Find first empty row that isn't just a placeholder with no data
   const empty=readings.find(r=>!r.sys&&!r.dia);
   if(empty){
     empty.sys=String(sys);empty.dia=String(dia);renderList();
@@ -665,7 +808,7 @@ function addReadingFromVoice(sys,dia){
     readings.push({id,sys:String(sys),dia:String(dia),included:true});
     renderList();
   }
-  document.getElementById('micHeard').textContent='✓ Added: '+sys+'/'+dia;
+  document.getElementById('micHeard').textContent='✓ '+sys+'/'+dia+' added';
 }
 </script>
 </body>
