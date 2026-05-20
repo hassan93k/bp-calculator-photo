@@ -133,6 +133,22 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,'SF Pro Text'
 </head>
 <body>
 
+<!-- SETUP SCREEN -->
+<div id="setupScreen" style="display:none;min-height:100vh;background:#f2f2f7;flex-direction:column;align-items:center;justify-content:center;padding:32px 24px;">
+  <div style="background:#003087;width:64px;height:64px;border-radius:16px;display:flex;align-items:center;justify-content:center;margin-bottom:24px;">
+    <svg width="32" height="32" viewBox="0 0 24 24" fill="white"><path d="M12 14a3 3 0 0 0 3-3V5a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-3.08A7 7 0 0 0 19 11h-2z"/></svg>
+  </div>
+  <div style="font-size:22px;font-weight:700;color:#1c1c1e;margin-bottom:8px;text-align:center;letter-spacing:-0.3px">BP Calculator Setup</div>
+  <div style="font-size:14px;color:#8e8e93;text-align:center;line-height:1.5;margin-bottom:32px">Enter your Azure Computer Vision key to get started. You only need to do this once.</div>
+  <input id="keyInput" type="password" placeholder="Paste your Azure key here"
+    style="width:100%;max-width:360px;padding:14px 16px;border-radius:12px;border:1.5px solid #e0e0e5;font-size:15px;font-family:inherit;outline:none;margin-bottom:12px;color:#1c1c1e;background:#fff;">
+  <button onclick="submitKey()"
+    style="width:100%;max-width:360px;padding:15px;border-radius:12px;border:none;background:#003087;color:#fff;font-size:16px;font-weight:600;cursor:pointer;font-family:inherit;">
+    Continue →
+  </button>
+  <div style="font-size:11px;color:#c7c7cc;margin-top:16px;text-align:center">Your key is stored only in this browser session and is never transmitted anywhere except Microsoft Azure UK South.</div>
+</div>
+
 <!-- HOME -->
 <div class="home" id="homeScreen">
   <div class="home-header">
@@ -237,14 +253,26 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,'SF Pro Text'
 <script>
 // ══ REPLACE THIS WITH YOUR AZURE KEY ══
 const AZURE_ENDPOINT='https://bp-ocr-khalil.cognitiveservices.azure.com/';
+const AZURE_ENDPOINT='https://bp-ocr-khalil.cognitiveservices.azure.com/';
 
-function getAzureKey(){
-  let key=localStorage.getItem('bp_azure_key');
-  if(!key){
-    key=prompt('First time setup:\n\nEnter your Azure Computer Vision key:');
-    if(key)localStorage.setItem('bp_azure_key',key.trim());
+// Key stored in sessionStorage — only for this browser session, clears when tab closes
+function getKey(){return sessionStorage.getItem('azk');}
+function saveKey(k){sessionStorage.setItem('azk',k.trim());}
+
+// Show setup screen if no key saved
+window.addEventListener('DOMContentLoaded',()=>{
+  if(!getKey()){
+    document.getElementById('setupScreen').style.display='flex';
+    document.getElementById('homeScreen').style.display='none';
   }
-  return key?key.trim():null;
+});
+
+function submitKey(){
+  const k=document.getElementById('keyInput').value.trim();
+  if(!k){alert('Please enter your Azure key.');return;}
+  saveKey(k);
+  document.getElementById('setupScreen').style.display='none';
+  document.getElementById('homeScreen').style.display='flex';
 }
 // ══════════════════════════════════════
 
@@ -261,12 +289,6 @@ async function processPhoto(e){
   document.getElementById('spinnerScreen').classList.add('show');
 
   try{
-    const AZURE_KEY=getAzureKey();
-    if(!AZURE_KEY){
-      document.getElementById('spinnerScreen').classList.remove('show');
-      alert('No Azure key set. Please reload and enter your key.');
-      return;
-    }
     // Compress image before sending
     const compressed=await compressImage(file);
     const blob=await fetch(compressed).then(r=>r.blob());
@@ -276,7 +298,7 @@ async function processPhoto(e){
     const response=await fetch(url,{
       method:'POST',
       headers:{
-        'Ocp-Apim-Subscription-Key':AZURE_KEY,
+        'Ocp-Apim-Subscription-Key':getKey(),
         'Content-Type':'application/octet-stream'
       },
       body:blob
