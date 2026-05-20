@@ -251,19 +251,19 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,'SF Pro Text'
 </div>
 
 <script>
-// ══ REPLACE THIS WITH YOUR AZURE KEY ══
-const AZURE_ENDPOINT='https://bp-ocr-khalil.cognitiveservices.azure.com/';
 const AZURE_ENDPOINT='https://bp-ocr-khalil.cognitiveservices.azure.com/';
 
-// Key stored in sessionStorage — only for this browser session, clears when tab closes
-function getKey(){return sessionStorage.getItem('azk');}
-function saveKey(k){sessionStorage.setItem('azk',k.trim());}
+// Key stored in localStorage — persists across sessions on this device
+function getKey(){return localStorage.getItem('azk');}
+function saveKey(k){localStorage.setItem('azk',k.trim());}
 
 // Show setup screen if no key saved
 window.addEventListener('DOMContentLoaded',()=>{
   if(!getKey()){
     document.getElementById('setupScreen').style.display='flex';
     document.getElementById('homeScreen').style.display='none';
+  }else{
+    document.getElementById('homeScreen').style.display='flex';
   }
 });
 
@@ -274,7 +274,6 @@ function submitKey(){
   document.getElementById('setupScreen').style.display='none';
   document.getElementById('homeScreen').style.display='flex';
 }
-// ══════════════════════════════════════
 
 let readings=[];
 let idCounter=0;
@@ -289,9 +288,8 @@ async function processPhoto(e){
   document.getElementById('spinnerScreen').classList.add('show');
 
   try{
-    // Compress image before sending
-    const compressed=await compressImage(file);
-    const blob=await fetch(compressed).then(r=>r.blob());
+    // Compress image and convert to blob for Azure
+    const blob=await compressToBlob(file);
 
     // Call Azure Computer Vision Read API (UK South)
     const url=AZURE_ENDPOINT+'computervision/imageanalysis:analyze?api-version=2024-02-01&features=read';
@@ -318,17 +316,17 @@ async function processPhoto(e){
     // Parse BP readings from text
     const found=extractBPs(fullText);
 
-    if(!found.length){
-      alert('No BP readings found.\n\nMake sure the sheet is well-lit and in focus.\nYou can add readings manually below.');
-    }
-
     readings=found.map(r=>({id:idCounter++,sys:String(r.sys),dia:String(r.dia),included:true}));
     // Add one empty row for manual corrections
     readings.push({id:idCounter++,sys:'',dia:'',included:true});
 
-    document.getElementById('homeScreen').classList.add('hidden');
+    document.getElementById('homeScreen').style.display='none';
     document.getElementById('resultsScreen').classList.add('show');
     renderList();
+
+    if(!found.length){
+      alert('No BP readings detected automatically.\n\nPlease check the photo was clear and well-lit, then add readings manually using the + button below.');
+    }
 
   }catch(err){
     alert('Error: '+err.message);
@@ -337,7 +335,7 @@ async function processPhoto(e){
   }
 }
 
-function compressImage(file){
+function compressToBlob(file){
   return new Promise(res=>{
     const reader=new FileReader();
     reader.onload=ev=>{
@@ -355,7 +353,7 @@ function compressImage(file){
         ctx.fillStyle='#fff';
         ctx.fillRect(0,0,w,h);
         ctx.drawImage(img,0,0,w,h);
-        res(c.toDataURL('image/jpeg',0.88));
+        c.toBlob(blob=>res(blob),'image/jpeg',0.88);
       };
       img.src=ev.target.result;
     };
@@ -385,7 +383,7 @@ function goHome(){
   document.getElementById('countLabel').textContent='0 of 0';
   document.getElementById('progressCount').textContent='0';
   document.getElementById('resultsScreen').classList.remove('show');
-  document.getElementById('homeScreen').classList.remove('hidden');
+  document.getElementById('homeScreen').style.display='flex';
 }
 
 function addReading(openKeypad){
